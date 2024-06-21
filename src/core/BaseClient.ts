@@ -5,10 +5,6 @@ export class BaseClient {
     private readonly options: ClientOptions;
     public readonly cache = new Map<string, { [key: string]: JSONDataTypes }[]>();
 
-    /**
-     * The base class for the client.
-     * @param {ClientOptions} options The constructor options.
-     */
     constructor(options: ClientOptions) {
         this.options = options;
 
@@ -37,12 +33,6 @@ export class BaseClient {
         }
     }
 
-    /**
-     * Write the JSON file.
-     * @param {{ [key: string]: { [key: string]: JSONDataTypes }[] }} data The data to put on the JSON file.
-     * @param {boolean} updateCache Update cache
-     * @returns {this}
-     */
     protected write(data: { [key: string]: { [key: string]: JSONDataTypes }[] }, updateCache: boolean = true): this {
         try {
             if (this.options.cache && updateCache) {
@@ -53,9 +43,9 @@ export class BaseClient {
                 }
             } else {
                 if (Object.keys(data).length == 0) {
-                    writeFileSync(this.options.path, JSON.stringify({}, null, 4), 'utf-8');
+                    writeFileSync(this.options.path, JSON.stringify({}, null, this.options.json?.spaces), 'utf-8');
                 } else {
-                    writeFileSync(this.options.path, JSON.stringify(data, null, 4), 'utf-8');
+                    writeFileSync(this.options.path, JSON.stringify(data, null, this.options.json?.spaces), 'utf-8');
                 }
             }
 
@@ -65,11 +55,6 @@ export class BaseClient {
         }
     }
 
-    /**
-     * Read the JSON file.
-     * @param {boolean | undefined} json Return JSON file data, without reading from cache.
-     * @returns {{ [key: string]: { [key: string]: JSONDataTypes }[] }}
-     */
     protected read(json: boolean | undefined = false): { [key: string]: { [key: string]: JSONDataTypes }[] } {
         try {
             if (json) {

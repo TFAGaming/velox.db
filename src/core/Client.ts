@@ -1,50 +1,118 @@
-import { ClientOptions, JSONDataTypes, Model } from "../types";
+import { ClientOptions, JSONDataTypes, Model, QueryOptions, Structure } from "../types";
 import { BaseClient } from "./BaseClient";
+import { v6 as uuidv6 } from 'uuid';
+
+const processQuery = <T>(data: T[], options: QueryOptions<T>): T[] => {
+    let result = data;
+
+    if (options.sort) {
+        result.sort((a, b) => {
+            for (const key in options.sort) {
+                if (a[key as keyof T] > b[key as keyof T]) return options.sort[key as keyof T] === 1 ? 1 : -1;
+                if (a[key as keyof T] < b[key as keyof T]) return options.sort[key as keyof T] === 1 ? -1 : 1;
+            }
+
+            return 0;
+        });
+    }
+
+    if (options.skip) {
+        result = result.slice(options.skip);
+    }
+
+    if (options.limit) {
+        result = result.slice(0, options.limit);
+    }
+
+    if (options.projection) {
+        result = result.map(item => {
+            const projectedItem = {} as T;
+
+            for (const key of options.projection!) {
+                projectedItem[key] = item[key];
+            }
+
+            return projectedItem;
+        });
+    }
+
+    return result;
+}
 
 export class Client<M extends Model[]> extends BaseClient {
     /**
-     * The main client to create the database and manage its data.
+     * Client class for handling operations on a JSON data store.
      * @param {ClientOptions} options The client options.
      */
     constructor(options: ClientOptions) {
         super(options);
     }
-    
-    /**
-     * Add columns to a table.
-     * @param {string} table The table name.
-     * @param {{[key: string]: JSONDataTypes}[]} data The data for each column.
-     * @returns 
-     */
-    public insert<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, ...data: C[]): { [key: string]: JSONDataTypes }[] {
+
+    public create<T extends M[number]['table']>(...tables: T[]): this {
         const json = this.read();
-        const columns = json[table];
 
-        if (!columns) {
-            return [];
-        }
+        for (const table of tables) {
+            if (table in json) {
+                continue;
+            }
 
-        json[table] = [...columns, ...data];
+            json[table] = [];
+        };
+
         this.write(json);
 
-        return json[table];
+        return this;
+    }
+
+    public insert<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, ...data: Omit<C, "_id">[]): C[] {
+        const json = this.read();
+
+        if (!(table in json)) {
+            throw new Error('Table not found');
+        }
+
+        const columns = json[table];
+
+        const final: { [key: string]: JSONDataTypes }[] = [];
+
+        for (let each of (data as Structure)) {
+            each = {
+                "_id": uuidv6(),
+                ...each
+            }
+
+            final.push(each);
+        }
+
+        json[table] = [...columns, ...final];
+        this.write(json);
+
+        return (json[table] as C[]);
     }
 
     /**
-     * Perform filtering based on dynamic conditions (like functions for comparisons) in a table.
-     * @param {string} table The table name.
-     * @param where The filtering object.
-     * @returns {{ [key: string]: JSONDataTypes }[]}
+     * Filters records in the specified table based on the given criteria.
+     * @template T - Table name type.
+     * @template C - Columns type of the table.
+     * @param {T} table - The name of the table to filter.
+     * @param {{ [K in keyof C]?: (value: C[K]) => boolean }} where - Criteria to filter records.
+     * @param {QueryOptions<C>} [query] - Additional options like sorting, limiting, and projection.
+     * @returns {C[]} - Array of filtered records.
      */
-    public find<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }): { [key: string]: JSONDataTypes }[] {
+    public find<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }, query?: QueryOptions<C>): C[] {
         const json = this.read();
+
+        if (!(table in json)) {
+            throw new Error('Table not found');
+        }
+
         const columns = json[table];
 
         if (!columns || columns.length == 0) {
             return [];
         }
 
-        return columns.filter((item: { [key: string]: JSONDataTypes }) => {
+        const filtered = columns.filter((item: { [key: string]: JSONDataTypes }) => {
             return Object.entries(where).every(([key, condition]) => {
                 if (typeof condition === 'function') {
                     return condition(item[key]);
@@ -52,17 +120,26 @@ export class Client<M extends Model[]> extends BaseClient {
 
                 return true;
             });
-        });
+        }) as C[];
+
+        if (query) {
+            return processQuery(filtered, query);
+        } else {
+            return filtered;
+        }
     }
 
     /**
-     * Perform filtering based on dynamic conditions (like functions for comparisons) in a table, returns the first element from array.
-     * @param {string} table The table name.
-     * @param where The filtering object.
-     * @returns {{ [key: string]: JSONDataTypes } | null}
+     * Filters records in the specified table based on the given criteria, returns the first record.
+     * @template T - Table name type.
+     * @template C - Columns type of the table.
+     * @param {T} table - The name of the table to filter.
+     * @param {{ [K in keyof C]?: (value: C[K]) => boolean }} where - Criteria to filter records.
+     * @param {QueryOptions<C>} [query] - Additional options like sorting, limiting, and projection.
+     * @returns {C | null} - Filtered record.
      */
-    public findFirst<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }): { [key: string]: JSONDataTypes } | null {
-        const found = this.find(table, where);
+    public findFirst<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }, query?: QueryOptions<C>): C | null {
+        const found = this.find(table, where, query);
 
         if (found.length == 0) {
             return null;
@@ -72,13 +149,20 @@ export class Client<M extends Model[]> extends BaseClient {
     }
 
     /**
-     * Delete filtered objects from a table.
-     * @param {string} table The table name.
-     * @param where The filtering object.
-     * @returns {{ [key: string]: JSONDataTypes }[]}
+     * Deletes records from the specified table based on the given criteria.
+     * @template T - Table name type.
+     * @template C - Columns type of the table.
+     * @param {T} table - The name of the table to delete from.
+     * @param {{ [K in keyof C]?: (value: C[K]) => boolean }} [where] - Criteria to filter records to delete.
+     * @returns {number} - Number of records deleted.
      */
-    public delete<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }): { [key: string]: JSONDataTypes }[] {
+    public delete<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }): number {
         const json = this.read();
+
+        if (!(table in json)) {
+            throw new Error('Table not found');
+        }
+
         const columns = json[table];
 
         if (!columns) {
@@ -97,22 +181,25 @@ export class Client<M extends Model[]> extends BaseClient {
         json[table] = newColumns;
         this.write(json);
 
-        return newColumns;
+        return columns.length - newColumns.length;
     }
 
     /**
-     * Delete first filtered object from a table.
-     * @param {string} table The table name.
-     * @param where The filtering object.
-     * @returns {{ [key: string]: JSONDataTypes }[]}
+     * Deletes first record from the specified table based on the given criteria.
+     * @template T - Table name type.
+     * @template C - Columns type of the table.
+     * @param {T} table - The name of the table to delete from.
+     * @param {{ [K in keyof C]?: (value: C[K]) => boolean }} [where] - Criteria to filter records to delete.
+     * @returns {number} - Number of records deleted.
      */
-    public deleteFirst<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where?: { [K in keyof C]?: (value: C[K]) => boolean }): { [key: string]: JSONDataTypes }[] {
+    public deleteFirst<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }): number {
         const json = this.read();
-        const columns = json[table];
 
-        if (!columns) {
-            return [];
+        if (!(table in json)) {
+            throw new Error('Table not found');
         }
+
+        const columns = json[table];
 
         const index = columns.findIndex((item: { [key: string]: JSONDataTypes }) => {
             return Object.entries(where || {}).every(([key, condition]) => {
@@ -127,19 +214,29 @@ export class Client<M extends Model[]> extends BaseClient {
         if (index !== -1) {
             columns.splice(index, 1);
             this.write(json);
-        }
 
-        return columns;
+            return 1;
+        } else {
+            return 0;
+        }
     }
 
     /**
-     * Update data for multiple columns in a table.
-     * @param {string} table The table name.
-     * @param where The filtering object.
-     * @returns {{ [key: string]: JSONDataTypes }[]}
+     * Updates records in the specified table based on the given criteria and update values.
+     * @template T - Table name type.
+     * @template C - Columns type of the table.
+     * @param {T} table - The name of the table to update.
+     * @param {{ [K in keyof C]?: (value: C[K]) => boolean }} [where] - Criteria to filter records to update.
+     * @param {Partial<C>} updates - Update values for the records.
+     * @returns {number} - Number of records updated.
      */
-    public update<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }, updates: Partial<C>): { [key: string]: JSONDataTypes }[] {
+    public update<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }, updates: Partial<Omit<C, "_id">>): C[] {
         const json = this.read();
+
+        if (!(table in json)) {
+            throw new Error('Table not found');
+        }
+
         const columns = json[table];
 
         if (!columns) {
@@ -164,19 +261,22 @@ export class Client<M extends Model[]> extends BaseClient {
 
         this.write(json);
 
-        return columns;
+        return columns as C[];
     }
 
     /**
-     * Delete a table from the database.
-     * @param {string[]} tables The table name.
-     * @returns {{ [key: string]: { [key: string]: JSONDataTypes; }[]; }}
+     * Drops specified tables from the database.
+     * @template T - Table name type.
+     * @param {...T[]} tables - Tables to drop from the database.
+     * @returns {Record<string, Record<string, JSONDataTypes>[]>} - Updated JSON data after dropping tables.
      */
-    public drop<T extends M[number]['table']>(...tables: T[]): { [key: string]: { [key: string]: JSONDataTypes; }[]; } {
+    public drop<T extends M[number]['table']>(...tables: T[]): Record<string, Record<string, JSONDataTypes>[]> {
         const json = this.read();
 
         for (const table of tables) {
-            delete json[table];
+            if (table in json) {
+                delete json[table];
+            }
         }
 
         this.write(json);
@@ -185,9 +285,10 @@ export class Client<M extends Model[]> extends BaseClient {
     }
 
     /**
-     * Get the database tables count, or a table columns count.
-     * @param {string | undefined} table The table name.
-     * @returns {number}
+     * Retrieves the number of records in a specific table or the total number of tables if no table is specified.
+     * @template T - Table name type.
+     * @param {T} [table] - Optional. The table to get the size of.
+     * @returns {number} - Number of records in the specified table or total number of tables if no table is specified.
      */
     public size<T extends M[number]['table']>(table?: T): number {
         const json = this.read();
@@ -195,6 +296,10 @@ export class Client<M extends Model[]> extends BaseClient {
         if (!table) {
             return Object.keys(json).length;
         } else {
+            if (!(table in json)) {
+                throw new Error('Table not found');
+            }
+
             const columns = json[table];
 
             if (!columns) {
@@ -204,16 +309,41 @@ export class Client<M extends Model[]> extends BaseClient {
             return columns.length;
         }
     }
-    
+
     /**
-     * Perform filtering based on dynamic conditions (like functions for comparisons) in a table, returns the size of the array.
-     * @param {string} table The table name.
-     * @param where The filtering object.
-     * @returns {number}
+     * Counts the number of records that match the specified criteria in the given table.
+     * @template T - Table name type.
+     * @template C - Columns type of the table.
+     * @param {T} table - The name of the table to count the records from.
+     * @param {{ [K in keyof C]?: (value: C[K]) => boolean }} where - Criteria to filter records.
+     * @param {QueryOptions<C>} [query] - Additional options like sorting, limiting, and projection.
+     * @returns {number} - Number of records that match the criteria.
      */
-    public count<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }): number {
-        const found = this.find(table, where);
+    public count<T extends M[number]['table'], C extends Extract<M[number], { table: T }>['columns']>(table: T, where: { [K in keyof C]?: (value: C[K]) => boolean }, query?: QueryOptions<C>): number {
+        const found = this.find(table, where, query);
 
         return found.length;
+    }
+
+    /**
+     * Clears all records from the specified tables.
+     * @template T - Table name type.
+     * @param {...T[]} tables - Tables to clear records from.
+     * @returns {this} - Current instance for method chaining.
+     */
+    public clear<T extends M[number]['table']>(...tables: T[]): this {
+        const json = this.read();
+
+        for (const table of tables) {
+            if (!(table in json)) {
+                continue;
+            }
+
+            json[table] = [];
+        };
+
+        this.write(json);
+
+        return this;
     }
 }
