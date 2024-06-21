@@ -1,0 +1,11 @@
+{
+    "$schema": "https://typedoc.org/schema.json",
+    "plugin": [
+        "typedoc-material-theme"
+    ],
+    "themeColor": "#424549",
+    "theme": "default",
+    "sidebarLinks": {
+        "Home": "http://tfagaming.github.io/velox.db"
+    }
+}
