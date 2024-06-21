@@ -1,7 +1,7 @@
 {
 	"name": "velox.db",
 	"version": "1.0.0",
-	"description": "",
+	"description": "velox.db is an open-source Node.js library that allows you to store data in a JSON file easily.",
 	"main": "lib/index.js",
 	"scripts": {
 		"test": "tsc && node .",
@@ -24,5 +24,6 @@
 	},
 	"repository": {
 		"url": "https://github.com/TFAGaming/velox.db.git"
-	}
+	},
+	"homepage": "https://tfagaming.github.io/velox.db/"
 }
